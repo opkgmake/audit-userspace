@@ -6,91 +6,98 @@ on:
 jobs:
   static-build-arm64:
     name: Static Build for ARM64
-    runs-on: ubuntu-22.04  # 使用更稳定的22.04版本
+    runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install cross-compilation tools
+      - name: Build static ARM64 binaries with Docker
         run: |
-          sudo apt-get update
-          # 安装交叉编译工具链
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu \
-            build-essential \
-            autoconf automake libtool \
-            file pkg-config
-          
+          # 创建 Dockerfile
+          cat > Dockerfile.static-arm64 << 'EOF'
+          FROM ubuntu:22.04 AS builder
+
+          # 设置非交互式环境
+          ENV DEBIAN_FRONTEND=noninteractive
+
+          # 安装所有必要的工具和库
+          RUN apt-get update && \
+              apt-get install -y \
+                build-essential \
+                autoconf \
+                automake \
+                libtool \
+                file \
+                pkg-config \
+                gcc-aarch64-linux-gnu \
+                g++-aarch64-linux-gnu \
+                binutils-aarch64-linux-gnu
+
           # 添加多架构支持并安装ARM64库
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y \
-            libcap-ng-dev:arm64 \
-            libkrb5-dev:arm64 \
-            libldap-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libssl-dev:arm64
+          RUN dpkg --add-architecture arm64 && \
+              apt-get update && \
+              apt-get install -y \
+                libcap-ng-dev:arm64 \
+                libkrb5-dev:arm64 \
+                libldap-dev:arm64 \
+                zlib1g-dev:arm64 \
+                libssl-dev:arm64
 
-      - name: Configure for static ARM64 build
-        run: |
-          autoreconf -f --install
-          
+          WORKDIR /src
+          COPY . .
+
           # 设置交叉编译环境
-          export CC="aarch64-linux-gnu-gcc"
-          export CXX="aarch64-linux-gnu-g++"
-          export AR="aarch64-linux-gnu-ar"
-          export RANLIB="aarch64-linux-gnu-ranlib"
-          export STRIP="aarch64-linux-gnu-strip"
-          export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig"
-          
-          # 静态编译标志
-          export CFLAGS="-static -O2"
-          export CXXFLAGS="-static -O2"
-          export LDFLAGS="-static"
-          
-          ./configure \
-            --host=aarch64-linux-gnu \
-            --build=x86_64-linux-gnu \
-            --enable-static \
-            --disable-shared \
-            --with-python3=no \
-            --enable-gssapi-krb5=yes \
-            --with-aarch64 \
-            --with-libcap-ng=yes \
-            --without-golang \
-            --enable-zos-remote \
-            --enable-experimental \
-            --with-io_uring
+          ENV CC="aarch64-linux-gnu-gcc" \
+              CXX="aarch64-linux-gnu-g++" \
+              AR="aarch64-linux-gnu-ar" \
+              RANLIB="aarch64-linux-gnu-ranlib" \
+              STRIP="aarch64-linux-gnu-strip" \
+              PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig" \
+              CFLAGS="-static -O2" \
+              CXXFLAGS="-static -O2" \
+              LDFLAGS="-static"
 
-      - name: Build static ARM64 binaries
-        run: |
-          make -j$(nproc)
-          
-          # 验证二进制文件
-          find . -type f -executable -exec sh -c '
-            file "$1" | grep -q "statically linked" && 
-            file "$1" | grep -q "ARM aarch64" &&
-            echo "Valid static ARM64 binary: $1"
-          ' sh {} \;
+          # 配置和构建
+          RUN autoreconf -f --install && \
+              ./configure \
+                --host=aarch64-linux-gnu \
+                --build=x86_64-linux-gnu \
+                --enable-static \
+                --disable-shared \
+                --with-python3=no \
+                --enable-gssapi-krb5=yes \
+                --with-aarch64 \
+                --with-libcap-ng=yes \
+                --without-golang \
+                --enable-zos-remote \
+                --enable-experimental \
+                --with-io_uring && \
+              make -j$(nproc) && \
+              find . -type f -executable -exec aarch64-linux-gnu-strip {} \;
 
-      - name: Strip debug symbols
-        run: |
-          find . -type f -executable -exec aarch64-linux-gnu-strip {} \;
+          # 创建输出目录
+          RUN mkdir -p /output/bin && \
+              find . -type f -executable -exec cp {} /output/bin/ \;
 
-      - name: Package static binaries
-        run: |
-          mkdir -p artifacts/static-arm64-bin
+          # 最终阶段只包含二进制文件
+          FROM scratch
+          COPY --from=builder /output/bin /
+          EOF
+
+          # 构建Docker镜像并提取二进制文件
+          docker build -t static-arm64-builder -f Dockerfile.static-arm64 .
           
-          # 收集所有可执行文件
-          find . -type f -executable -exec cp {} artifacts/static-arm64-bin/ \;
+          # 创建容器并复制二进制文件
+          docker create --name extract-static static-arm64-builder
+          docker cp extract-static:/bin ./static-binaries
+          docker rm extract-static
           
-          # 创建压缩包
-          tar -czvf static-arm64-binaries.tar.gz -C artifacts/static-arm64-bin .
+          # 打包二进制文件
+          tar -czvf static-arm64-binaries.tar.gz -C static-binaries .
           
-          # 显示文件大小
+          # 验证文件
+          file static-binaries/* | grep 'statically linked' | grep 'ARM aarch64'
           du -h static-arm64-binaries.tar.gz
 
       - name: Upload static ARM64 binaries
