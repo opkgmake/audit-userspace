@@ -67,7 +67,7 @@ jobs:
         if: matrix.container != 'ubuntu:latest'
         run: make check
 
-  # 新增交叉编译ARM64的任务
+  # 修复的ARM64交叉编译任务
   cross-compile-arm64:
     name: Cross-compile for ARM64
     runs-on: ubuntu-latest
@@ -89,11 +89,15 @@ jobs:
             libcap-ng-dev \
             python3-dev swig \
             libkrb5-dev \
-            libldap-dev
+            libldap-dev \
+            file
 
       - name: Configure for ARM64
         run: |
           autoreconf -f --install
+          # 使用交叉编译器前缀
+          export CC=aarch64-linux-gnu-gcc
+          export CXX=aarch64-linux-gnu-g++
           ./configure \
             --host=aarch64-linux-gnu \
             --build=x86_64-linux-gnu \
@@ -109,19 +113,21 @@ jobs:
       - name: Build ARM64 binaries
         run: |
           make -j$(nproc)
-          file ./path/to/your/binary  # 替换为实际二进制路径
+          # 验证二进制文件架构
+          find . -type f -executable -exec sh -c "file {} | grep -q 'ARM aarch64'" \; -print
 
       - name: Package ARM64 binaries
         run: |
           mkdir -p artifacts/arm64-bin
-          # 复制所有需要的二进制文件和库
+          # 复制所有可执行文件和库
+          find . -type f -executable -exec cp --parents {} artifacts/arm64-bin/ \;
           find . -name '*.so' -exec cp --parents {} artifacts/arm64-bin/ \;
-          find . -executable -type f -name 'your-main-binary' -exec cp {} artifacts/arm64-bin/ \;
           
+          # 创建压缩包
           tar -czvf arm64-binaries.tar.gz -C artifacts/arm64-bin .
           
       - name: Upload ARM64 binaries
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4  # 更新到v4版本
         with:
           name: arm64-binaries
           path: arm64-binaries.tar.gz
