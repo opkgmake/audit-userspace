@@ -12,9 +12,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build static ARM64 binaries
+      - name: Install cross-compilation tools
         run: |
-          # 安装 ARM64 交叉编译工具链
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
@@ -31,18 +30,49 @@ jobs:
             libsasl2-dev \
             krb5-multidev
 
-          # 验证交叉编译器
+      - name: Verify cross-compiler
+        run: |
           echo "验证交叉编译器:"
           aarch64-linux-gnu-gcc --version
           echo 'int main(){return 0;}' > test.c
           aarch64-linux-gnu-gcc -static -o test test.c
           file test
+          ./test || echo "Test failed with status $?"
           rm test.c test
 
-          # 准备构建环境
+      - name: Prepare build environment
+        run: |
           autoreconf -f --install
           
-          # 配置项目
+          # 创建简化的配置脚本
+          cat > simple-configure.sh << 'EOF'
+          #!/bin/bash
+          set -x
+          
+          # 使用最小配置测试
+          ./configure \
+            --host=aarch64-linux-gnu \
+            CC="aarch64-linux-gnu-gcc" \
+            CFLAGS="-static" \
+            LDFLAGS="-static"
+          
+          # 如果最小配置失败，显示日志
+          if [ $? -ne 0 ]; then
+            echo "最小配置失败，显示 config.log:"
+            cat config.log
+            exit 1
+          fi
+          EOF
+          
+          chmod +x simple-configure.sh
+
+      - name: Run minimal configuration
+        run: |
+          ./simple-configure.sh
+
+      - name: Build with full configuration
+        run: |
+          # 完整配置
           ./configure \
             --host=aarch64-linux-gnu \
             --build=x86_64-linux-gnu \
@@ -65,8 +95,21 @@ jobs:
             CXXFLAGS="-static -O2" \
             LDFLAGS="-static -lldap -llber -lsasl2 -lkrb5 -lkrb5support"
           
+          # 如果配置失败，显示日志
+          if [ $? -ne 0 ]; then
+            echo "完整配置失败，显示 config.log:"
+            cat config.log
+            exit 1
+          fi
+          
           # 构建项目
-          make -j$(nproc)
+          make -j$(nproc) V=1
+          
+          # 如果构建失败，显示错误
+          if [ $? -ne 0 ]; then
+            echo "构建失败"
+            exit 1
+          fi
           
           # 剥离调试符号
           find . -type f -executable -exec aarch64-linux-gnu-strip {} \;
