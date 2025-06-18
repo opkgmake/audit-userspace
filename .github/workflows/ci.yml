@@ -6,7 +6,7 @@ on:
 jobs:
   static-build-arm64:
     name: Static Build for ARM64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # 使用更稳定的22.04版本
     
     steps:
       - name: Checkout code
