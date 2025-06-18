@@ -37,7 +37,11 @@ jobs:
                 pkg-config \
                 gcc-aarch64-linux-gnu \
                 g++-aarch64-linux-gnu \
-                binutils-aarch64-linux-gnu
+                binutils-aarch64-linux-gnu \
+                # 安装OpenLDAP开发库
+                libldap-dev \
+                libsasl2-dev \
+                krb5-multidev
           
           WORKDIR /src
           COPY . .
@@ -54,6 +58,8 @@ jobs:
           
           # 配置和构建
           RUN autoreconf -f --install && \
+              # 添加OpenLDAP链接标志
+              export LDFLAGS="-static -lldap -llber -lsasl2 -lkrb5 -lkrb5support" && \
               ./configure \
                 --host=aarch64-linux-gnu \
                 --build=x86_64-linux-gnu \
