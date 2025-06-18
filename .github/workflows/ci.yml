@@ -12,100 +12,74 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up QEMU static binaries
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Build static ARM64 binaries with Docker
+      - name: Build static ARM64 binaries
         run: |
-          # 创建 Dockerfile
-          cat > Dockerfile.static-arm64 << 'EOF'
-          FROM ubuntu:22.04 AS builder
+          # 安装 ARM64 交叉编译工具链
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            autoconf \
+            automake \
+            libtool \
+            file \
+            pkg-config \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            libc6-dev-arm64-cross \
+            libldap-dev \
+            libsasl2-dev \
+            krb5-multidev
+
+          # 验证交叉编译器
+          echo "验证交叉编译器:"
+          aarch64-linux-gnu-gcc --version
+          echo 'int main(){return 0;}' > test.c
+          aarch64-linux-gnu-gcc -static -o test test.c
+          file test
+          rm test.c test
+
+          # 准备构建环境
+          autoreconf -f --install
           
-          # 设置非交互式环境
-          ENV DEBIAN_FRONTEND=noninteractive
+          # 配置项目
+          ./configure \
+            --host=aarch64-linux-gnu \
+            --build=x86_64-linux-gnu \
+            --enable-static \
+            --disable-shared \
+            --with-python3=no \
+            --enable-gssapi-krb5=yes \
+            --with-aarch64 \
+            --with-libcap-ng=yes \
+            --without-golang \
+            --enable-zos-remote \
+            --enable-experimental \
+            --with-io_uring \
+            CC="aarch64-linux-gnu-gcc" \
+            CXX="aarch64-linux-gnu-g++" \
+            AR="aarch64-linux-gnu-ar" \
+            RANLIB="aarch64-linux-gnu-ranlib" \
+            STRIP="aarch64-linux-gnu-strip" \
+            CFLAGS="-static -O2" \
+            CXXFLAGS="-static -O2" \
+            LDFLAGS="-static -lldap -llber -lsasl2 -lkrb5 -lkrb5support"
           
-          # 安装基础构建工具和完整的交叉编译工具链
-          RUN apt-get update && \
-              apt-get install -y \
-                build-essential \
-                autoconf \
-                automake \
-                libtool \
-                file \
-                pkg-config \
-                # 安装完整的交叉编译工具链
-                crossbuild-essential-arm64 \
-                # 安装OpenLDAP开发库
-                libldap-dev \
-                libsasl2-dev \
-                krb5-multidev
+          # 构建项目
+          make -j$(nproc)
           
-          WORKDIR /src
-          COPY . .
+          # 剥离调试符号
+          find . -type f -executable -exec aarch64-linux-gnu-strip {} \;
           
-          # 设置交叉编译环境
-          ENV CC="aarch64-linux-gnu-gcc" \
-              CXX="aarch64-linux-gnu-g++" \
-              AR="aarch64-linux-gnu-ar" \
-              RANLIB="aarch64-linux-gnu-ranlib" \
-              STRIP="aarch64-linux-gnu-strip" \
-              # 先设置基本标志，稍后添加OpenLDAP
-              CFLAGS="-static -O2" \
-              CXXFLAGS="-static -O2" \
-              LDFLAGS="-static"
-          
-          # 验证编译器是否正常工作
-          RUN aarch64-linux-gnu-gcc --version && \
-              echo 'int main() { return 0; }' > test.c && \
-              aarch64-linux-gnu-gcc -static -o test test.c && \
-              file test | grep 'ARM aarch64' && \
-              ./test && \
-              rm test.c test
-          
-          # 配置和构建
-          RUN autoreconf -f --install && \
-              # 添加OpenLDAP链接标志
-              export LDFLAGS="$LDFLAGS -lldap -llber -lsasl2 -lkrb5 -lkrb5support" && \
-              ./configure \
-                --host=aarch64-linux-gnu \
-                --build=x86_64-linux-gnu \
-                --enable-static \
-                --disable-shared \
-                --with-python3=no \
-                --enable-gssapi-krb5=yes \
-                --with-aarch64 \
-                --with-libcap-ng=yes \
-                --without-golang \
-                --enable-zos-remote \
-                --enable-experimental \
-                --with-io_uring && \
-              make -j$(nproc) && \
-              find . -type f -executable -exec aarch64-linux-gnu-strip {} \;
-          
-          # 创建输出目录
-          RUN mkdir -p /output/bin && \
-              find . -type f -executable -exec cp {} /output/bin/ \;
-          
-          # 最终阶段只包含二进制文件
-          FROM scratch
-          COPY --from=builder /output/bin /
-          EOF
-          
-          # 构建Docker镜像并提取二进制文件
-          docker buildx build --platform linux/arm64 -t static-arm64-builder -f Dockerfile.static-arm64 .
-          
-          # 创建容器并复制二进制文件
-          docker create --name extract-static static-arm64-builder
-          docker cp extract-static:/bin ./static-binaries
-          docker rm extract-static
-          
-          # 打包二进制文件
-          tar -czvf static-arm64-binaries.tar.gz -C static-binaries .
+          # 收集二进制文件
+          mkdir -p artifacts/static-arm64-bin
+          find . -type f -executable -exec cp {} artifacts/static-arm64-bin/ \;
           
           # 验证文件
-          file static-binaries/* | grep 'statically linked' | grep 'ARM aarch64'
+          file artifacts/static-arm64-bin/* | grep 'statically linked' | grep 'ARM aarch64'
+          
+          # 打包
+          tar -czvf static-arm64-binaries.tar.gz -C artifacts/static-arm64-bin .
           du -h static-arm64-binaries.tar.gz
 
       - name: Upload static ARM64 binaries
