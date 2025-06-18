@@ -12,32 +12,39 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install static compilation tools
+      - name: Install cross-compilation tools
         run: |
           sudo apt-get update
+          # 安装交叉编译工具链
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
             build-essential \
             autoconf automake libtool \
-            # 安装静态库
+            file pkg-config
+          
+          # 添加多架构支持并安装ARM64库
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
             libcap-ng-dev:arm64 \
             libkrb5-dev:arm64 \
             libldap-dev:arm64 \
             zlib1g-dev:arm64 \
-            # 其他工具
-            file binutils
+            libssl-dev:arm64
 
       - name: Configure for static ARM64 build
         run: |
           autoreconf -f --install
           
-          # 设置静态编译环境
+          # 设置交叉编译环境
           export CC="aarch64-linux-gnu-gcc"
           export CXX="aarch64-linux-gnu-g++"
           export AR="aarch64-linux-gnu-ar"
           export RANLIB="aarch64-linux-gnu-ranlib"
           export STRIP="aarch64-linux-gnu-strip"
+          export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig"
           
           # 静态编译标志
           export CFLAGS="-static -O2"
@@ -60,7 +67,7 @@ jobs:
 
       - name: Build static ARM64 binaries
         run: |
-          make -j$(nproc) V=1
+          make -j$(nproc)
           
           # 验证二进制文件
           find . -type f -executable -exec sh -c '
@@ -69,7 +76,7 @@ jobs:
             echo "Valid static ARM64 binary: $1"
           ' sh {} \;
 
-      - name: Strip debug symbols (optional)
+      - name: Strip debug symbols
         run: |
           find . -type f -executable -exec aarch64-linux-gnu-strip {} \;
 
