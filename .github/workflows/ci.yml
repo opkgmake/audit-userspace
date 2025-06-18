@@ -26,7 +26,7 @@ jobs:
           # 设置非交互式环境
           ENV DEBIAN_FRONTEND=noninteractive
           
-          # 安装基础构建工具
+          # 安装基础构建工具和完整的交叉编译工具链
           RUN apt-get update && \
               apt-get install -y \
                 build-essential \
@@ -35,9 +35,8 @@ jobs:
                 libtool \
                 file \
                 pkg-config \
-                gcc-aarch64-linux-gnu \
-                g++-aarch64-linux-gnu \
-                binutils-aarch64-linux-gnu \
+                # 安装完整的交叉编译工具链
+                crossbuild-essential-arm64 \
                 # 安装OpenLDAP开发库
                 libldap-dev \
                 libsasl2-dev \
@@ -52,14 +51,23 @@ jobs:
               AR="aarch64-linux-gnu-ar" \
               RANLIB="aarch64-linux-gnu-ranlib" \
               STRIP="aarch64-linux-gnu-strip" \
+              # 先设置基本标志，稍后添加OpenLDAP
               CFLAGS="-static -O2" \
               CXXFLAGS="-static -O2" \
               LDFLAGS="-static"
           
+          # 验证编译器是否正常工作
+          RUN aarch64-linux-gnu-gcc --version && \
+              echo 'int main() { return 0; }' > test.c && \
+              aarch64-linux-gnu-gcc -static -o test test.c && \
+              file test | grep 'ARM aarch64' && \
+              ./test && \
+              rm test.c test
+          
           # 配置和构建
           RUN autoreconf -f --install && \
               # 添加OpenLDAP链接标志
-              export LDFLAGS="-static -lldap -llber -lsasl2 -lkrb5 -lkrb5support" && \
+              export LDFLAGS="$LDFLAGS -lldap -llber -lsasl2 -lkrb5 -lkrb5support" && \
               ./configure \
                 --host=aarch64-linux-gnu \
                 --build=x86_64-linux-gnu \
