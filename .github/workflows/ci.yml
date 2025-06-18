@@ -1,10 +1,7 @@
 name: CI Matrix
 
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
+  workflow_dispatch:  # 改为手动触发
 
 jobs:
   build-and-test:
@@ -60,6 +57,35 @@ jobs:
           make -j$(nproc)
 
       - name: Run tests
-        # Temporarily disable for Ubuntu
-        if: matrix.container != 'ubuntu:latest'
+        if: matrix.container != 'ubuntu:latest'  # 临时禁用Ubuntu测试
+        run: make check
+
+  # 新增ARM64专用编译任务
+  build-arm64:
+    name: Build for ARM64
+    runs-on: ubuntu-22.04-arm64  # 使用ARM64架构的runner
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gawk diffutils autoconf automake libtool \
+            gcc build-essential \
+            linux-headers-generic \
+            libkrb5-dev libcap-ng-dev \
+            python3-dev swig libldap-dev
+
+      - name: Build for ARM64
+        run: |
+          autoreconf -f --install
+          ./configure --with-python3=yes --enable-gssapi-krb5=yes \
+            --with-aarch64 --with-libcap-ng=yes \
+            --without-golang --enable-zos-remote \
+            --enable-experimental --with-io_uring
+          make -j$(nproc)
+
+      - name: Run tests on ARM64
         run: make check
